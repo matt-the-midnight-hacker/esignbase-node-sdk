@@ -1,0 +1,35 @@
+{
+  "name": "esignbase-sdk",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "SDK for eSignBase – eIDAS-compliant digital signatures and GDPR-ready electronic signing via REST API.",
+  "main": "index.js",
+  "scripts": {
+    "test": "vitest",
+    "test:run": "vitest run"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/matt-the-midnight-hacker/esignbase-node-sdk.git"
+  },
+  "keywords": [
+    "digital signature",
+    "electronic signature",
+    "eIDAS",
+    "GDPR",
+    "REST API",
+    "EU compliance"
+  ],
+  "author": "Matthias Meß",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "bugs": {
+    "url": "https://github.com/matt-the-midnight-hacker/esignbase-node-sdk/issues"
+  },
+  "homepage": "https://esignbase.com",
+  "devDependencies": {
+    "vitest": "^4.0.18"
+  }
+}
