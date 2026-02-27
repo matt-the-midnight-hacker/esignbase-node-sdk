@@ -22,5 +22,11 @@ jobs:
       with:
         node-version: ${{ matrix.node-version }}
         cache: 'npm'
-    - run: npm install
-    - run: npm test
+    - name: Install dependencies
+      run: npm ci  # npm ci is faster and stricter than npm install for CI
+
+    - name: Build (if needed)
+      run: npm run build --if-present
+
+    - name: Run tests
+      run: npm test
