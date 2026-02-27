@@ -22,8 +22,19 @@ jobs:
       with:
         node-version: ${{ matrix.node-version }}
         cache: 'npm'
-    - name: Install dependencies
-      run: npm ci  # npm ci is faster and stricter than npm install for CI
+    # For Node.js 18, use an older Vitest version
+    - name: Install dependencies (Node.js 18)
+      if: matrix.node-version == '18.x'
+      run: |
+        npm install --no-package-lock vitest@1.x
+        npm install --no-package-lock
+
+    # For Node.js 20+, use latest Vitest
+    - name: Install dependencies (Node.js 20+)
+      if: matrix.node-version != '18.x'
+      run: |
+        npm install --no-package-lock vitest@latest
+        npm install --no-package-lock
 
     - name: Build (if needed)
       run: npm run build --if-present
