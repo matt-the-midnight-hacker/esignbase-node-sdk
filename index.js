@@ -1,13 +1,11 @@
 import { Readable } from 'node:stream';
 
+const TOKEN_EXPIRY_SECONDS = 300;
+const TOKEN_EXPIRY_BUFFER_SECONDS = 30;
+
 /* ============================================================
  * Enums
  * ============================================================ */
-
-export const GrantType = Object.freeze({
-  CLIENT_CREDENTIALS: 'client_credentials',
-  AUTHORIZATION_CODE: 'authorization_code',
-});
 
 export const Scope = Object.freeze({
   ALL: 'all',
@@ -37,11 +35,10 @@ export default class ESignBaseClient {
   #baseURL;
   #clientId;
   #clientSecret;
-  #grantType;
-  #username;
-  #password;
   #scope;
   #accessToken = null;
+  #refreshToken = null;
+  #tokenExpiresAt = null;
 
   /**
    * @typedef {'all' | 'read' | 'create_document' | 'delete' | 'sandbox'} ScopeValue
@@ -51,61 +48,38 @@ export default class ESignBaseClient {
    * @param {Object} options
    * @param {string} options.clientId
    * @param {string} options.clientSecret
-   * @param {string} options.grantType
    * @param {ScopeValue[]} options.scope
-   * @param {string} [options.username]
-   * @param {string} [options.password]
    * @param {string} [options.baseURL]
    */
-  constructor({
-    clientId,
-    clientSecret,
-    grantType,
-    scope,
-    username,
-    password,
-    baseURL = 'https://app.esignbase.com/',
-  }) {
+  constructor({ clientId, clientSecret, scope, baseURL = 'https://app.esignbase.com/' }) {
     if (!clientId) throw new ESignBaseSDKError('Client ID is required');
     if (!clientSecret) throw new ESignBaseSDKError('Client secret is required');
-    if (!grantType) throw new ESignBaseSDKError('Grant type is required');
     if (!scope || scope.length === 0) {
       throw new ESignBaseSDKError('At least one scope must be provided');
     }
 
-    // Validate grant type
-    if (!Object.values(GrantType).includes(grantType)) {
-      throw new ESignBaseSDKError('Invalid grant type');
-    }
-
-    // Validate scopes
     const validScopes = Object.values(Scope);
     if (!scope.every(s => validScopes.includes(s))) {
       throw new ESignBaseSDKError('Invalid scope value provided');
     }
 
-    if (
-      grantType === GrantType.AUTHORIZATION_CODE &&
-      (!username || !password)
-    ) {
-      throw new ESignBaseSDKError(
-        'Username and password are required for authorization_code grant type'
-      );
-    }
-
     this.#clientId = clientId;
     this.#clientSecret = clientSecret;
-    this.#grantType = grantType;
     this.#scope = scope;
-    this.#username = username;
-    this.#password = password;
-    this.#baseURL = baseURL.endsWith('/')
-      ? baseURL
-      : baseURL + '/';
+    this.#baseURL = baseURL.endsWith('/') ? baseURL : baseURL + '/';
   }
 
   get isConnected() {
     return !!this.#accessToken;
+  }
+
+  get #isTokenExpired() {
+    if (!this.#tokenExpiresAt) return true;
+    return Date.now() >= this.#tokenExpiresAt - TOKEN_EXPIRY_BUFFER_SECONDS * 1000;
+  }
+
+  get #basicAuthHeader() {
+    return 'Basic ' + Buffer.from(`${this.#clientId}:${this.#clientSecret}`).toString('base64');
   }
 
   /* ============================================================
@@ -122,50 +96,81 @@ export default class ESignBaseClient {
       }
       throw new ESignBaseSDKError(message, response.status);
     }
-
     return response;
   }
 
-  async #request(method, path, options = {}, retry = true) {
-    if (!this.isConnected) {
-      throw new ESignBaseSDKError('Client is not connected. Call connect() first.');
+  #applyTokenResponse(data) {
+    this.#accessToken = data.access_token;
+    this.#refreshToken = data.refresh_token ?? null;
+    const expiresIn = data.expires_in ?? TOKEN_EXPIRY_SECONDS;
+    this.#tokenExpiresAt = Date.now() + expiresIn * 1000;
+  }
+
+  async #fetchToken(body) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
+    try {
+      const response = await fetch(`${this.#baseURL}oauth2/token`, {
+        method: 'POST',
+        headers: {
+          Authorization: this.#basicAuthHeader,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body,
+        signal: controller.signal,
+      });
+      await this.#handleResponse(response);
+      return response.json();
+    } finally {
+      clearTimeout(timeoutId);
     }
+  }
+
+  async #refresh() {
+    if (!this.#refreshToken) {
+      await this.connect();
+      return;
+    }
+    try {
+      const data = await this.#fetchToken(new URLSearchParams({
+        grant_type: 'refresh_token',
+        refresh_token: this.#refreshToken,
+      }));
+      this.#applyTokenResponse(data);
+    } catch {
+      // Refresh token may have been revoked — fall back to full connect
+      await this.connect();
+    }
+  }
+
+  async #ensureFresh() {
+    if (!this.isConnected || this.#isTokenExpired) {
+      await this.#refresh();
+    }
+  }
+
+  async #request(method, path, options = {}) {
+    await this.#ensureFresh();
 
     const url = `${this.#baseURL}${path.replace(/^\//, '')}`;
 
-    const executeFetch = async () => {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(
-        () => controller.abort(),
-        options.timeout || 15000
-      );
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), options.timeout || 15000);
 
-      try {
-        const response = await fetch(url, {
-          method,
-          headers: {
-            Authorization: `Bearer ${this.#accessToken}`,
-            ...(options.headers),
-          },
-          body: options.body,
-          signal: controller.signal,
-        });
-
-        return response;
-      } finally {
-        clearTimeout(timeoutId);
-      }
-    };
-
-    let response = await executeFetch();
-
-    // Retry once on 401
-    if (response.status === 401 && retry) {
-      await this.connect();
-      response = await executeFetch();
+    try {
+      const response = await fetch(url, {
+        method,
+        headers: {
+          Authorization: `Bearer ${this.#accessToken}`,
+          ...options.headers,
+        },
+        body: options.body,
+        signal: controller.signal,
+      });
+      return this.#handleResponse(response);
+    } finally {
+      clearTimeout(timeoutId);
     }
-
-    return this.#handleResponse(response);
   }
 
   /* ============================================================
@@ -173,44 +178,15 @@ export default class ESignBaseClient {
    * ============================================================ */
 
   async connect() {
-    const authString = Buffer
-      .from(`${this.#clientId}:${this.#clientSecret}`)
-      .toString('base64');
+    this.#accessToken = null;
+    this.#refreshToken = null;
+    this.#tokenExpiresAt = null;
 
-    const body = new URLSearchParams({
-      grant_type: this.#grantType,
+    const data = await this.#fetchToken(new URLSearchParams({
+      grant_type: 'client_credentials',
       scope: this.#scope.join(' '),
-    });
-
-    if (this.#grantType === GrantType.AUTHORIZATION_CODE) {
-      body.append('username', this.#username);
-      body.append('password', this.#password);
-    }
-
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000);
-
-    try {
-      const response = await fetch(
-        `${this.#baseURL}oauth2/token`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Basic ${authString}`,
-            'Content-Type': 'application/x-www-form-urlencoded',
-          },
-          body,
-          signal: controller.signal,
-        }
-      );
-
-      await this.#handleResponse(response);
-
-      const data = await response.json();
-      this.#accessToken = data.access_token;
-    } finally {
-      clearTimeout(timeoutId);
-    }
+    }));
+    this.#applyTokenResponse(data);
   }
 
   async getTemplates() {
@@ -219,10 +195,7 @@ export default class ESignBaseClient {
   }
 
   async getTemplate(templateId) {
-    const response = await this.#request(
-      'GET',
-      `api/template/${encodeURIComponent(templateId)}`
-    );
+    const response = await this.#request('GET', `api/template/${encodeURIComponent(templateId)}`);
     return response.json();
   }
 
@@ -235,20 +208,11 @@ export default class ESignBaseClient {
   }
 
   async getDocument(documentId) {
-    const response = await this.#request(
-      'GET',
-      `api/document/${encodeURIComponent(documentId)}`
-    );
+    const response = await this.#request('GET', `api/document/${encodeURIComponent(documentId)}`);
     return response.json();
   }
 
-  async createDocument({
-    templateId,
-    documentName,
-    recipients,
-    userDefinedMetadata,
-    expirationDate,
-  }) {
+  async createDocument({ templateId, documentName, recipients, userDefinedMetadata, expirationDate }) {
     const requestData = {
       name: documentName,
       template_id: templateId,
@@ -261,38 +225,26 @@ export default class ESignBaseClient {
       })),
     };
 
-    if (userDefinedMetadata) {
-      requestData.user_defined_metadata = userDefinedMetadata;
-    }
-
-    if (expirationDate instanceof Date) {
-      requestData.expiration_date = expirationDate.toISOString();
-    }
+    if (userDefinedMetadata) requestData.user_defined_metadata = userDefinedMetadata;
+    if (expirationDate instanceof Date) requestData.expiration_date = expirationDate.toISOString();
 
     const response = await this.#request('POST', 'api/document', {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(requestData),
     });
-
     return response.json();
   }
 
   async downloadDocument(documentId) {
     const response = await this.#request(
       'GET',
-      `api/document/${encodeURIComponent(documentId)}/download`,
-      {},
-      false
+      `api/document/${encodeURIComponent(documentId)}/download`
     );
-
     return Readable.fromWeb(response.body);
   }
 
   async deleteDocument(documentId) {
-    await this.#request(
-      'DELETE',
-      `api/document/${encodeURIComponent(documentId)}`
-    );
+    await this.#request('DELETE', `api/document/${encodeURIComponent(documentId)}`);
     return true;
   }
 

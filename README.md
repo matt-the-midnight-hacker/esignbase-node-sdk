@@ -1,276 +1,203 @@
-# eSignBase Node SDK
+# eSignBase Node.js SDK
 
-Official Node SDK for integrating **eIDAS-compliant digital signatures** into your application using the eSignBase REST API.
+Official Node.js SDK for integrating **eIDAS-compliant electronic signatures** into your application using the [eSignBase](https://esignbase.com) REST API.
 
-eSignBase provides GDPR-ready electronic signatures with EU-based infrastructure and flexible pay-as-you-go pricing  — no subscriptions, no per-seat licenses.
-
-This SDK offers a simple, synchronous client for creating signing requests, managing templates, and retrieving       signed documents programmatically.
+eSignBase provides GDPR-ready electronic signatures with EU-based infrastructure and flexible pay-as-you-go pricing — no subscriptions, no per-seat licenses.
 
 ## Why eSignBase?
 
 - ✅ eIDAS-compliant electronic signatures
 - ✅ GDPR-aligned EU data hosting
-- ✅ Simple REST API
 - ✅ No subscriptions — pay-as-you-go credits
-- ✅ Lightweight and easy to integrate
+- ✅ Automatic token refresh — no manual token management needed
+- ✅ Lightweight, no heavy dependencies (uses native `fetch`)
 
-## Documentation
+## Installation
 
-Full REST API documentation:
-https://esignbase.com/api_documentation
+```bash
+npm install esignbase-sdk
+```
 
-A step-by-step integration guide:
-https://esignbase.com/blog/rest-api-guide
+Requires Node.js 18 or higher.
 
+## Quickstart
 
-# Classes
+```js
+import ESignBaseClient, { Scope } from 'esignbase-sdk';
 
-## GrantType
-
-Defines the available OAuth2 grant types:
-
--   CLIENT_CREDENTIALS -- For server-to-server authentication
--   AUTHORIZATION_CODE -- For user-specific authentication
-
-------------------------------------------------------------------------
-
-## Scope
-
-Defines the available API permission scopes:
-
--   ALL -- Full access to all API endpoints
--   READ -- Read-only access
--   CREATE_DOCUMENT -- Permission to create documents
--   DELETE -- Permission to delete documents
--   SANDBOX -- Access to the sandbox environment (recommended for
-    testing)
-
-------------------------------------------------------------------------
-
-## ESignBaseClient
-
-Main client class that stores authentication credentials and state.
-
-### Constructor
-
-new ESignBaseClient({ clientId: string, clientSecret: string, grantType:
-GrantType, scope: Scope\[\], username?: string, password?: string,
-baseURL?: string })
-
-### Options
-
--   clientId -- Client ID from ESignBase\
--   clientSecret -- Client secret from ESignBase\
--   grantType -- OAuth2 grant type to use\
--   scope -- Array of requested API scopes\
--   username -- Required when using AUTHORIZATION_CODE\
--   password -- Required when using AUTHORIZATION_CODE\
--   baseURL -- Optional override (e.g. sandbox or staging)
-
-Retrieve your Client ID and Client Secret at:\
-https://app.esignbase.com/oauth2/client
-
-------------------------------------------------------------------------
-
-## ESignBaseSDKError
-
-Custom error class for API-related errors.
-
-All API failures, validation errors, and network issues throw
-ESignBaseSDKError.
-
-------------------------------------------------------------------------
-
-# Methods
-
-All methods are asynchronous and return Promises.
-
-------------------------------------------------------------------------
-
-## connect()
-
-Authenticates with the ESignBase API and stores the access token
-internally.
-
-Example:
-
-``` js
-import ESignBaseClient, { GrantType, Scope } from 'esignbase-sdk';
-
+// 1. Create and authenticate a client
 const client = new ESignBaseClient({
   clientId: 'your_client_id',
   clientSecret: 'your_client_secret',
-  grantType: GrantType.CLIENT_CREDENTIALS,
   scope: [Scope.ALL],
 });
-
-await client.connect();
-```
-
-------------------------------------------------------------------------
-
-## getTemplates()
-
-Retrieves available document templates.
-
-Returns: Promise\<Array`<Object>`{=html}\>
-
-------------------------------------------------------------------------
-
-## getTemplate(templateId)
-
-Retrieves details of a specific template.
-
-Returns: Promise`<Object>`{=html}
-
-------------------------------------------------------------------------
-
-## getDocuments(limit, offset)
-
-Retrieves a paginated list of documents.
-
-Returns: Promise`<Object>`{=html}\
-Example structure: { documents: \[...\] }
-
-------------------------------------------------------------------------
-
-## getDocument(documentId)
-
-Retrieves details of a specific document.
-
-Returns: Promise`<Object>`{=html}
-
-------------------------------------------------------------------------
-
-## createDocument(options)
-
-Creates a new document from a template.
-
-Example:
-
-``` js
-const document = await client.createDocument({
-  templateId: 'template_123',
-  documentName: 'Contract Agreement',
-  recipients: [
-    {
-      email: 'signer@example.com',
-      first_name: 'John',
-      last_name: 'Doe',
-      role_name: 'Signer',
-      locale: 'de'
-    }
-  ],
-  userDefinedMetadata: { contract_id: 'CTR-2024-001' },
-  expirationDate: new Date('2024-12-31')
-});
-```
-
-Returns: Promise`<Object>`{=html}
-
-------------------------------------------------------------------------
-
-## deleteDocument(documentId)
-
-Deletes a specific document.
-
-Returns: Promise`<boolean>`{=html}
-
-------------------------------------------------------------------------
-
-## downloadDocument(documentId)
-
-Downloads a completed document.
-
-Returns a Node.js Readable stream.
-
-Example:
-
-``` js
-import { createWriteStream } from 'node:fs';
-
-const stream = await client.downloadDocument('document_id');
-const file = createWriteStream('document.pdf');
-stream.pipe(file);
-```
-
-------------------------------------------------------------------------
-
-## getCredits()
-
-Retrieves credit balance information.
-
-Returns: Promise`<Object>`{=html}
-
-------------------------------------------------------------------------
-
-# Error Handling
-
-All methods throw ESignBaseSDKError on failure.
-
-Example:
-
-``` js
-try {
-  const templates = await client.getTemplates();
-} catch (error) {
-  console.error('API Error:', error.message);
-}
-```
-
-------------------------------------------------------------------------
-
-# Complete Example
-
-``` js
-import ESignBaseClient, { GrantType, Scope } from 'esignbase-sdk';
-
-const client = new ESignBaseClient({
-  clientId: 'your_client_id',
-  clientSecret: 'your_client_secret',
-  grantType: GrantType.CLIENT_CREDENTIALS,
-  scope: [Scope.CREATE_DOCUMENT, Scope.READ],
-});
-
 await client.connect();
 
+// 2. List available templates
 const templates = await client.getTemplates();
-const templateId = templates[0].id;
 
+// 3. Send a document for signature
 const document = await client.createDocument({
-  templateId,
+  templateId: templates[0].id,
   documentName: 'NDA Agreement',
   recipients: [
     {
       email: 'alice@example.com',
       first_name: 'Alice',
       last_name: 'Smith',
-      role_name: 'Signer',
-      locale: 'en'
-    }
-  ]
+      role_name: 'signee_1', // must match a role defined in the template
+      locale: 'en',
+    },
+  ],
 });
 
-const documentDetails = await client.getDocument(document.id);
-await client.deleteDocument(document.id);
+console.log(document); // { document_id: '...', status: 'DRAFT' }
 ```
 
-------------------------------------------------------------------------
+Retrieve your Client ID and Client Secret at [app.esignbase.com/oauth2/client](https://app.esignbase.com/oauth2/client).
 
-# Installation
+## Authentication
 
-npm install esignbase-sdk
+The SDK uses the OAuth2 **Client Credentials** grant. Call `connect()` once to authenticate — the SDK then manages token expiry and refresh automatically for all subsequent API calls.
 
-Requires Node.js \>= 18
+```js
+const client = new ESignBaseClient({
+  clientId: 'your_client_id',
+  clientSecret: 'your_client_secret',
+  scope: [Scope.ALL],
+});
+await client.connect();
+```
 
-------------------------------------------------------------------------
+### Sandbox Mode
 
-# Developer Notes
+Use the `SANDBOX` scope to test without consuming credits. Sandbox mode uses templates created in your sandbox environment.
 
-Install dependencies:
+```js
+const client = new ESignBaseClient({
+  clientId: 'your_client_id',
+  clientSecret: 'your_client_secret',
+  scope: [Scope.ALL, Scope.SANDBOX],
+});
+await client.connect();
+```
 
-npm install
+## API Reference
 
-Run tests:
+### Scopes
 
-npm test
+| Scope | Description |
+|---|---|
+| `Scope.ALL` | Full access (read, create, delete). Does not include sandbox. |
+| `Scope.READ` | Read documents and templates. |
+| `Scope.CREATE_DOCUMENT` | Create and send documents for signature. |
+| `Scope.DELETE` | Delete documents. |
+| `Scope.SANDBOX` | Sandbox mode — no credits consumed. |
+
+### `connect()`
+
+Authenticates with the eSignBase API and stores the access token internally. Throws `ESignBaseSDKError` if authentication fails.
+
+### `getTemplates()`
+
+Returns a list of all available templates.
+
+```js
+const templates = await client.getTemplates();
+// [{ id: '...', filename: 'contract.pdf', form_role_names: ['signee_1'], ... }]
+```
+
+### `getTemplate(templateId)`
+
+Returns details for a single template.
+
+### `getDocuments(limit, offset)`
+
+Returns a paginated list of documents.
+
+```js
+const result = await client.getDocuments(50, 0);
+// { documents: [...], count: 120 }
+```
+
+### `getDocument(documentId)`
+
+Returns details for a single document, including its current status.
+
+### `createDocument(options)`
+
+Creates a new document from a template and sends it to recipients.
+
+`recipients` must include one entry per role defined in the template's `form_role_names`. `userDefinedMetadata` is an optional `Object` with string values for attaching your own data (e.g. internal IDs) to the document.
+
+```js
+const document = await client.createDocument({
+  templateId: 'your_template_id',
+  documentName: 'Employment Contract',
+  recipients: [
+    {
+      email: 'bob@example.com',
+      first_name: 'Bob',
+      last_name: 'Jones',
+      role_name: 'signee_1',
+      locale: 'de',
+    },
+  ],
+  userDefinedMetadata: { internal_id: 'EMP-2024-042' },
+  expirationDate: new Date('2025-12-31'),
+});
+```
+
+### `downloadDocument(documentId)`
+
+Returns a Node.js `Readable` stream of the completed, signed PDF. Only available once the document status is `DIGITAL_SIGNATURE_CREATED` or `COMPLETED`.
+
+```js
+import { createWriteStream } from 'node:fs';
+
+const stream = await client.downloadDocument(document.document_id);
+stream.pipe(createWriteStream('signed_contract.pdf'));
+```
+
+### `deleteDocument(documentId)`
+
+Deletes a document. Returns `true` on success.
+
+### `getCredits()`
+
+Returns the current credit balance.
+
+```js
+const balance = await client.getCredits();
+// { credits: 42 }
+```
+
+## Error Handling
+
+All methods throw `ESignBaseSDKError` on failure. The error includes a `statusCode` property with the HTTP status code where applicable.
+
+```js
+try {
+  const document = await client.createDocument({ ... });
+} catch (error) {
+  console.error(`Error ${error.statusCode}: ${error.message}`);
+}
+```
+
+## Document Statuses
+
+| Status | Description |
+|---|---|
+| `DRAFT` | Created but not yet sent. |
+| `SENT` | Sent to all recipients. |
+| `PARTIALLY_SIGNED` | Signed by some recipients. |
+| `COMPLETED` | Signing process complete. |
+| `VOIDED` | Document expired or voided. |
+
+Full status list available in the [API documentation](https://esignbase.com/en/api_documentation/).
+
+## Further Reading
+
+- [Full API Documentation](https://esignbase.com/en/api_documentation/)
+- [Step-by-step REST API guide](https://esignbase.com/blog/rest-api-guide)
+- [PyPI package (Python SDK)](https://pypi.org/project/esignbase-sdk/)
